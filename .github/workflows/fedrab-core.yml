@@ -23,43 +23,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.10'
-      - run: pip install -q --index-url https://download.pytorch.org/whl/cpu torch
-      - run: pip install -q pytest numpy
+      - run: python -m pip install -q --index-url https://download.pytorch.org/whl/cpu torch
+      - run: python -m pip install -q pytest numpy
       - name: Compile
         run: python -m compileall -q fedrab scripts tests
-      - name: FAM import
-        if: always()
-        run: python -c "from fedrab.boundary import fast_adjacency_margin; print('import ok')"
-      - name: FAM call
-        if: always()
-        run: python -c "from tests.test_core import _fam_case; x,l,s=_fam_case(); print(l, s['active_pixels'])"
-      - name: FAM finite
-        if: always()
-        run: pytest -q tests/test_core.py::test_fam_forward_is_finite
-      - name: FAM boundary selection
-        if: always()
-        run: pytest -q tests/test_core.py::test_fam_selects_boundary_pixels
-      - name: FAM pair recording
-        if: always()
-        run: pytest -q tests/test_core.py::test_fam_records_direct_pair
-      - name: FAM backward
-        if: always()
-        run: pytest -q tests/test_core.py::test_fam_backward_is_finite
-      - name: Reject nonadjacent competitor
-        if: always()
-        run: pytest -q tests/test_core.py::test_non_adjacent_class_is_not_used_as_competitor
-      - name: Empty-boundary stability
-        if: always()
-        run: pytest -q tests/test_core.py::test_boundary_loss_handles_empty_boundary
-      - name: Pair memory ordering
-        if: always()
-        run: pytest -q tests/test_core.py::test_pair_memory_upweights_reliable_hard_pair
-      - name: Class-evidence aggregation
-        if: always()
-        run: pytest -q tests/test_core.py::test_classifier_rows_use_class_evidence
-      - name: CGFA norm preservation
-        if: always()
-        run: pytest -q tests/test_core.py::test_group_rebalance_preserves_total_update_norm
-      - name: Function-space LoRA
-        if: always()
-        run: pytest -q tests/test_core.py::test_lora_effective_delta_round_trip
+      - name: Core tests
+        run: python -m pytest -q tests/test_core.py
