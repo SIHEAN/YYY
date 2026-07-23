@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import json
 import random
+import re
 from pathlib import Path
-from typing import Dict, Iterable, List, Mapping, Sequence, Tuple
+from typing import Dict, List, Mapping, Sequence, Tuple
 
 import numpy as np
 import torch
@@ -31,31 +32,65 @@ def _scan_split(root: Path, split: str) -> List[Tuple[Path, Path]]:
     for image_path in sorted(image_root.glob("*/*_leftImg8bit.png")):
         city = image_path.parent.name
         stem = image_path.name.replace("_leftImg8bit.png", "")
-        label = label_root / city / f"{stem}_gtFine_labelIds.png"
-        if label.exists():
+        candidates = [
+            label_root / city / f"{stem}_gtFine_labelTrainIds.png",
+            label_root / city / f"{stem}_gtFine_labelIds.png",
+        ]
+        label = next((p for p in candidates if p.exists()), None)
+        if label is not None:
             pairs.append((image_path, label))
     if not pairs:
         raise FileNotFoundError(f"No Cityscapes {split} pairs found below {root}")
     return pairs
 
 
-def _extract_client_entries(partition: Mapping) -> Dict[str, Sequence]:
-    for key in ("clients", "client_data", "client_indices", "partitions"):
+def _client_id(key) -> int:
+    text = str(key)
+    if text.isdigit():
+        return int(text)
+    match = re.fullmatch(r"client[_-]?(\d+)", text, flags=re.IGNORECASE)
+    if match:
+        return int(match.group(1))
+    raise ValueError(f"Unsupported client key: {key}")
+
+
+def _extract_client_entries(partition: Mapping) -> Dict[int, Sequence]:
+    for key in ("clients", "client_data", "client_indices", "partitions", "train"):
         value = partition.get(key)
         if isinstance(value, Mapping):
-            return {str(k): v for k, v in value.items()}
-    digit_keys = {str(k): v for k, v in partition.items() if str(k).isdigit()}
-    if digit_keys:
-        return digit_keys
+            return {_client_id(k): v for k, v in value.items()}
+    parsed = {}
+    for key, value in partition.items():
+        try:
+            parsed[_client_id(key)] = value
+        except ValueError:
+            continue
+    if parsed:
+        return parsed
     raise ValueError("Unsupported partition JSON: no client mapping was found")
 
 
 def _unwrap_entries(value):
     if isinstance(value, Mapping):
-        for key in ("train", "indices", "images", "samples", "data"):
+        for key in ("train", "indices", "image_indices", "images", "samples", "data", "files"):
             if key in value:
                 return value[key]
     return value
+
+
+def _stem_from_item(item) -> str:
+    if isinstance(item, Mapping):
+        for key in ("image", "image_path", "file", "filename", "id", "name"):
+            if key in item:
+                item = item[key]
+                break
+    text = str(item)
+    stem = Path(text).name
+    for suffix in (
+        "_leftImg8bit.png", "_gtFine_labelTrainIds.png", "_gtFine_labelIds.png",
+    ):
+        stem = stem.replace(suffix, "")
+    return stem
 
 
 def load_partition(data_root: str, partition_json: str) -> Dict[int, List[Tuple[Path, Path]]]:
@@ -68,22 +103,22 @@ def load_partition(data_root: str, partition_json: str) -> Dict[int, List[Tuple[
     payload = json.loads(Path(partition_json).read_text())
     raw_clients = _extract_client_entries(payload)
     result: Dict[int, List[Tuple[Path, Path]]] = {}
-    for client_key, raw in raw_clients.items():
+    for client_id, raw in raw_clients.items():
         entries = _unwrap_entries(raw)
         if not isinstance(entries, Sequence) or isinstance(entries, (str, bytes)):
-            raise ValueError(f"Client {client_key} entries are not a sequence")
+            raise ValueError(f"Client {client_id} entries are not a sequence")
         selected = []
         for item in entries:
             if isinstance(item, int):
                 selected.append(all_pairs[item])
                 continue
-            text = str(item)
-            stem = Path(text).name
-            stem = stem.replace("_leftImg8bit.png", "").replace("_gtFine_labelIds.png", "")
+            stem = _stem_from_item(item)
             if stem not in by_stem:
                 raise KeyError(f"Partition item not found in Cityscapes train split: {item}")
             selected.append(by_stem[stem])
-        result[int(client_key)] = selected
+        if not selected:
+            raise ValueError(f"Client {client_id} has no training images")
+        result[int(client_id)] = selected
     return result
 
 
@@ -93,11 +128,13 @@ class CityscapesFederatedDataset(Dataset):
         pairs: Sequence[Tuple[Path, Path]],
         train: bool,
         crop_size: Tuple[int, int] = (512, 512),
+        eval_size: Tuple[int, int] = (512, 1024),
         scale_range: Tuple[float, float] = (0.5, 2.0),
     ):
         self.pairs = list(pairs)
         self.train = train
         self.crop_size = crop_size
+        self.eval_size = eval_size
         self.scale_range = scale_range
 
     def __len__(self) -> int:
@@ -107,7 +144,11 @@ class CityscapesFederatedDataset(Dataset):
         image_path, label_path = self.pairs[index]
         image = Image.open(image_path).convert("RGB")
         raw = np.asarray(Image.open(label_path), dtype=np.uint8)
-        label = Image.fromarray(CITYSCAPES_ID_TO_TRAINID[raw])
+        if "labelTrainIds" in label_path.name:
+            mapped = raw
+        else:
+            mapped = CITYSCAPES_ID_TO_TRAINID[raw]
+        label = Image.fromarray(mapped)
         return image, label, image_path.stem
 
     def __getitem__(self, index: int):
@@ -125,18 +166,30 @@ class CityscapesFederatedDataset(Dataset):
             if random.random() < 0.5:
                 image = TF.hflip(image)
                 label = TF.hflip(label)
+        else:
+            image = TF.resize(image, list(self.eval_size), interpolation=TF.InterpolationMode.BILINEAR)
+            label = TF.resize(label, list(self.eval_size), interpolation=TF.InterpolationMode.NEAREST)
         image_tensor = TF.normalize(TF.to_tensor(image), MEAN, STD)
         label_tensor = torch.from_numpy(np.asarray(label, dtype=np.int64).copy()).long()
         return image_tensor, label_tensor, sample_id
 
 
-def build_datasets(data_root: str, partition_json: str, crop_size=(512, 512)):
+def build_datasets(
+    data_root: str,
+    partition_json: str,
+    crop_size=(512, 512),
+    eval_size=(512, 1024),
+):
     root = Path(data_root)
     partition = load_partition(data_root, partition_json)
     client_sets = {
-        client_id: CityscapesFederatedDataset(pairs, True, crop_size=crop_size)
+        client_id: CityscapesFederatedDataset(
+            pairs, True, crop_size=crop_size, eval_size=eval_size
+        )
         for client_id, pairs in partition.items()
     }
     val_pairs = _scan_split(root, "val")
-    val_set = CityscapesFederatedDataset(val_pairs, False, crop_size=crop_size)
+    val_set = CityscapesFederatedDataset(
+        val_pairs, False, crop_size=crop_size, eval_size=eval_size
+    )
     return client_sets, val_set
