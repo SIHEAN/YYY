@@ -17,7 +17,7 @@ for VARIANT in e1 full; do
   echo "================================================================"
   echo "FedRAB short experiment: ${VARIANT}"
   echo "================================================================"
-  "${PYTHON_BIN}" scripts/train_fedrab.py \
+  "${PYTHON_BIN}" scripts/train_fedrab_v1.py \
     --gpu "${GPU}" \
     --data_root "${DATA_ROOT}" \
     --partition_json "${PARTITION}" \
