@@ -6,6 +6,10 @@ on:
     paths:
       - 'FedRAB_v1/**'
       - '.github/workflows/fedrab-core.yml'
+  pull_request:
+    paths:
+      - 'FedRAB_v1/**'
+      - '.github/workflows/fedrab-core.yml'
   workflow_dispatch:
 
 jobs:
