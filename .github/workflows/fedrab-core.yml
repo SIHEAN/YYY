@@ -1,0 +1,25 @@
+name: FedRAB core tests
+
+on:
+  push:
+    branches: [fedrab-v1-delivery]
+    paths:
+      - 'FedRAB_v1/**'
+      - '.github/workflows/fedrab-core.yml'
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: FedRAB_v1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - run: pip install --index-url https://download.pytorch.org/whl/cpu torch
+      - run: pip install pytest numpy
+      - run: python -m compileall -q fedrab scripts tests
+      - run: pytest -q
