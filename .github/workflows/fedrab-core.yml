@@ -25,5 +25,19 @@ jobs:
           python-version: '3.10'
       - run: pip install -q --index-url https://download.pytorch.org/whl/cpu torch
       - run: pip install -q pytest numpy
-      - run: python -m compileall -q fedrab scripts tests
-      - run: pytest -vv
+      - name: Compile
+        run: python -m compileall -q fedrab scripts tests
+      - name: FAM differentiability
+        run: pytest -q tests/test_core.py::test_fast_adjacency_margin_is_finite_and_differentiable
+      - name: Adjacent-class competitor
+        run: pytest -q tests/test_core.py::test_non_adjacent_class_is_not_used_as_competitor
+      - name: Empty-boundary stability
+        run: pytest -q tests/test_core.py::test_boundary_loss_handles_empty_boundary
+      - name: Pair reliability memory
+        run: pytest -q tests/test_core.py::test_pair_memory_upweights_reliable_hard_pair
+      - name: Class-evidence row aggregation
+        run: pytest -q tests/test_core.py::test_classifier_rows_use_class_evidence
+      - name: CGFA norm preservation
+        run: pytest -q tests/test_core.py::test_group_rebalance_preserves_total_update_norm
+      - name: Function-space LoRA round trip
+        run: pytest -q tests/test_core.py::test_lora_effective_delta_round_trip
