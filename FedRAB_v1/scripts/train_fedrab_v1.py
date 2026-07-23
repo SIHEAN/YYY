@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Corrected FedRAB-v1 entry point.
+"""Corrected and optimized FedRAB-v1 entry point.
 
-Two protocol invariants are enforced here:
-1. the rank-16 local client model is separate from the immutable round-start
-   global model, so sequential client training cannot leak into later clients;
-2. repeated local epochs do not count as independent class/pair evidence.
+Protocol invariants:
+1. the rank-16 local model is separate from the immutable round-start server;
+2. repeated local epochs are not counted as independent evidence;
+3. all clients of a given rank restore the same cached round-start state;
+4. E1 boundary supervision is evaluated at label resolution, while FAM stays at
+   decoder resolution for low overhead.
 """
 
 import json
@@ -21,6 +23,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
 import train_fedrab as base
@@ -30,6 +33,20 @@ from fedrab.model import ModelConfig, build_model, parameter_report
 
 
 _original_train_client = base.train_client
+_original_boundary_loss = base.boundary_ce_dice
+
+
+def full_resolution_boundary_loss(logits, labels, tau=1, ignore_index=255, eps=1e-6):
+    if tuple(logits.shape[-2:]) != tuple(labels.shape[-2:]):
+        logits = F.interpolate(
+            logits, size=labels.shape[-2:], mode="bilinear", align_corners=False
+        )
+    return _original_boundary_loss(
+        logits, labels, tau=tau, ignore_index=ignore_index, eps=eps
+    )
+
+
+base.boundary_ce_dice = full_resolution_boundary_loss
 
 
 def evidence_normalized_train_client(
@@ -44,6 +61,14 @@ def evidence_normalized_train_client(
     for value in update.pair_stats.values():
         value.div_(repeats)
     return update
+
+
+def clone_state(model):
+    return {name: value.detach().cpu().clone() for name, value in model.state_dict().items()}
+
+
+def restore_state(model, state):
+    model.load_state_dict(state, strict=True)
 
 
 def run(args):
@@ -102,10 +127,17 @@ def run(args):
         logging.info("Round %d/%d clients=%s lr=%.3e", round_idx, args.rounds, selected, lr)
         updates = []
 
+        # Decompose/broadcast once per active rank, not once per client.
+        active_ranks = sorted({base.TIER.get(i, ("medium", 8, 2, 2))[1] for i in selected})
+        round_states = {}
+        for rank in active_ranks:
+            base.sync_from_global(local_models[rank], global_model)
+            round_states[rank] = clone_state(local_models[rank])
+
         for client_id in selected:
             tier, rank, epochs, _ = base.TIER.get(client_id, ("medium", 8, 2, 2))
             local = local_models[rank]
-            base.sync_from_global(local, global_model)
+            restore_state(local, round_states[rank])
             update = evidence_normalized_train_client(
                 local,
                 loaders[client_id],
