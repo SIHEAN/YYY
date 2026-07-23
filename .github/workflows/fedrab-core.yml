@@ -27,21 +27,23 @@ jobs:
       - run: pip install -q pytest numpy
       - name: Compile
         run: python -m compileall -q fedrab scripts tests
-      - name: Run tests and save diagnostics
-        id: pytest
-        shell: bash
-        run: |
-          set +e
-          pytest -vv > pytest-output.txt 2>&1
-          code=$?
-          cat pytest-output.txt
-          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
-          exit 0
-      - name: Upload pytest diagnostics
-        uses: actions/upload-artifact@v4
-        with:
-          name: fedrab-pytest-output
-          path: FedRAB_v1/pytest-output.txt
-      - name: Enforce pytest success
-        shell: bash
-        run: test "${{ steps.pytest.outputs.exit_code }}" = "0"
+      - name: FAM finite forward
+        run: pytest -q tests/test_core.py::test_fam_forward_is_finite
+      - name: FAM selects boundary
+        run: pytest -q tests/test_core.py::test_fam_selects_boundary_pixels
+      - name: FAM records direct pair
+        run: pytest -q tests/test_core.py::test_fam_records_direct_pair
+      - name: FAM finite backward
+        run: pytest -q tests/test_core.py::test_fam_backward_is_finite
+      - name: Reject nonadjacent competitor
+        run: pytest -q tests/test_core.py::test_non_adjacent_class_is_not_used_as_competitor
+      - name: Empty-boundary stability
+        run: pytest -q tests/test_core.py::test_boundary_loss_handles_empty_boundary
+      - name: Pair memory ordering
+        run: pytest -q tests/test_core.py::test_pair_memory_upweights_reliable_hard_pair
+      - name: Class-evidence aggregation
+        run: pytest -q tests/test_core.py::test_classifier_rows_use_class_evidence
+      - name: CGFA norm preservation
+        run: pytest -q tests/test_core.py::test_group_rebalance_preserves_total_update_norm
+      - name: Function-space LoRA
+        run: pytest -q tests/test_core.py::test_lora_effective_delta_round_trip
