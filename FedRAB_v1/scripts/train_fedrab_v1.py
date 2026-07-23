@@ -12,7 +12,12 @@ import logging
 import math
 import os
 import random
+import sys
 from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 import numpy as np
 import torch
@@ -53,7 +58,6 @@ def run(args):
         args.data_root, args.partition_json, (args.crop_h, args.crop_w)
     )
 
-    # Build one dedicated server model and three reusable local models.
     base.seed_everything(args.seed)
     global_model = build_model(ModelConfig(args.pretrained_path, args.num_classes, 16))
     local_models = {}
@@ -98,7 +102,6 @@ def run(args):
         logging.info("Round %d/%d clients=%s lr=%.3e", round_idx, args.rounds, selected, lr)
         updates = []
 
-        # Every client is synchronized from the same untouched round-start server.
         for client_id in selected:
             tier, rank, epochs, _ = base.TIER.get(client_id, ("medium", 8, 2, 2))
             local = local_models[rank]
