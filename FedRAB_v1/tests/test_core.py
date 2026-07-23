@@ -7,28 +7,48 @@ from fedrab.lora import LoRALinear
 from fedrab.memory import PairMemoryConfig, PairReliabilityMemory
 
 
-def test_fast_adjacency_margin_is_finite_and_differentiable():
-    logits = torch.randn(1, 3, 8, 8, requires_grad=True)
+def _fam_case():
+    logits = torch.zeros(1, 3, 8, 8, requires_grad=True)
+    logits.data[:, 0, :, :4] = 2.0
+    logits.data[:, 1, :, 4:] = 2.0
     labels = torch.zeros(1, 8, 8, dtype=torch.long)
     labels[:, :, 4:] = 1
     loss, stats = fast_adjacency_margin(
         logits, labels, config=FAMConfig(num_classes=3, max_pixels=64)
     )
-    assert torch.isfinite(loss)
-    assert stats["active_pixels"] > 0
-    assert stats["pair_count"][0, 1] + stats["pair_count"][1, 0] > 0
+    return logits, loss, stats
+
+
+def test_fam_forward_is_finite():
+    _, loss, _ = _fam_case()
+    assert bool(torch.isfinite(loss).item())
+
+
+def test_fam_selects_boundary_pixels():
+    _, _, stats = _fam_case()
+    assert float(stats["active_pixels"]) > 0.0
+
+
+def test_fam_records_direct_pair():
+    _, _, stats = _fam_case()
+    observed = stats["pair_count"][0, 1] + stats["pair_count"][1, 0]
+    assert float(observed.item()) > 0.0
+
+
+def test_fam_backward_is_finite():
+    logits, loss, _ = _fam_case()
     loss.backward()
     assert logits.grad is not None
-    assert torch.isfinite(logits.grad).all()
+    assert bool(torch.isfinite(logits.grad).all().item())
 
 
 def test_non_adjacent_class_is_not_used_as_competitor():
     logits = torch.zeros(1, 3, 6, 6, requires_grad=True)
-    logits.data[:, 2] = 20.0  # class 2 is high but absent from neighbouring labels
+    logits.data[:, 2] = 20.0
     labels = torch.zeros(1, 6, 6, dtype=torch.long)
     labels[:, :, 3:] = 1
     _, stats = fast_adjacency_margin(logits, labels, config=FAMConfig(num_classes=3))
-    assert stats["pair_count"][:, 2].sum() == 0
+    assert float(stats["pair_count"][:, 2].sum().item()) == 0.0
 
 
 def test_boundary_loss_handles_empty_boundary():
@@ -71,6 +91,7 @@ def test_classifier_rows_use_class_evidence():
 
 
 def test_group_rebalance_preserves_total_update_norm():
+    torch.manual_seed(7)
     prev = torch.zeros(6, 4)
     new = torch.randn(6, 4)
     support = torch.tensor([1.0, 2.0, 5.0, 20.0, 50.0, 100.0])
@@ -80,12 +101,12 @@ def test_group_rebalance_preserves_total_update_norm():
 
 
 def test_lora_effective_delta_round_trip():
+    torch.manual_seed(11)
     base = nn.Linear(5, 4, bias=False)
     layer = LoRALinear(base, rank=3, alpha=6.0)
     target = torch.randn(4, 5)
     layer.set_effective_delta(target)
     reconstructed = layer.effective_delta()
-    # rank-3 truncated SVD must match the optimal rank-3 approximation.
     u, s, vh = torch.linalg.svd(target, full_matrices=False)
     expected = (u[:, :3] * s[:3]) @ vh[:3]
     assert torch.allclose(reconstructed, expected, rtol=1e-4, atol=1e-5)
