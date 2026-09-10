@@ -65,6 +65,10 @@ jobs:
           s = main.read_text()
           s = s.replace('new LinearLayout.Layout.LayoutParams(', 'new LinearLayout.LayoutParams(')
           s = s.replace(
+              'root.addView(questionView, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(82));',
+              'root.addView(questionView, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(82)));'
+          )
+          s = s.replace(
               'root.addView(answerView, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(330)));',
               'answerView.setMinHeight(dp(330));\n        root.addView(answerView, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));'
           )
@@ -80,31 +84,17 @@ jobs:
           start = s.index('    private static JSONObject buildAnswerBody')
           end = s.index('    private static JSONObject buildTestBody', start)
           method = r'''    private static JSONObject buildAnswerBody(SpeechSettings s, String question, boolean stream) throws Exception {
-              String system = "你是一个严谨的题目分析助手。用户提供的是实时语音识别后的题目文本。"
-                      + "只依据用户提供的文本作答，优先保证答案正确、可执行、格式稳定。"
-                      + "先在内部判断属于单选题、多选题、编程题还是通用问题，但不要输出分类过程。";
+              String system = "你是一名资深软件工程师和面试辅导助手。请严格基于实时语音识别后的题目文本作答；若信息不足，先说明缺失，再给出最合理的假设与解决方案。";
               String format = "请根据下面的语音识别文本直接作答，并严格复用 QuizCoze 原来的输出规则：\n"
                       + "【单选题】\n"
-                      + "输出要求：第一行只写“答案：X”（X为选项字母或完整选项）；第二行开始给出简洁理由。\n"
-                      + "不要虚构文本中不存在的信息；若题目不完整，请明确指出缺失内容。\n\n"
+                      + "请识别文本中的单选题，给出最可能的正确选项。输出要求：第一行只写“答案：X”（X为选项字母或完整选项）；第二行开始给出简洁理由。不要虚构文本中不存在的信息；若题目不完整，请明确指出缺失内容。\n\n"
                       + "【多选题】\n"
-                      + "输出要求：第一行只写“答案：A,B,...”；随后逐项给出简洁理由。\n"
-                      + "不要虚构文本中不存在的信息；若题目不完整，请明确指出缺失内容。\n\n"
+                      + "请识别文本中的多选题，给出所有正确选项。输出要求：第一行只写“答案：A,B,...”；随后逐项给出简洁理由。不要虚构文本中不存在的信息；若题目不完整，请明确指出缺失内容。\n\n"
                       + "【编程题】\n"
-                      + "请给出正确、完整、可直接提交的解答。严格按以下格式输出，不要省略标题：\n"
-                      + "**解题思路：**\n"
-                      + "- 要点1\n"
-                      + "- 要点2\n"
-                      + "**代码实现：**\n"
-                      + "```text\n"
-                      + "完整可运行代码\n"
-                      + "```\n"
-                      + "**时间复杂度：** O(...)\n"
-                      + "**空间复杂度：** O(...)\n"
-                      + "代码块语言标签请尽量使用题目要求的编程语言，而不是 text。\n"
-                      + "若信息不足，先指出缺失信息，再基于可见条件给出最合理方案。\n\n"
+                      + "请识别文本中的编程题并给出正确、完整、可直接提交的解答。输出严格包含 **解题思路：** / **代码实现：** / **时间复杂度：** / **空间复杂度：**。\n\n"
                       + "【通用问题】\n"
-                      + "优先给出可直接使用的结论，再给必要解释。\n\n"
+                      + "请仔细阅读文本内容，理解用户最可能的需求，并给出高质量、可直接使用的回答。\n\n"
+                      + "请先在内部判断属于哪一类，不要输出分类过程。\n\n"
                       + "语音识别文本：\n" + question;
               JSONArray messages = new JSONArray()
                       .put(new JSONObject().put("role", "system").put("content", system))
