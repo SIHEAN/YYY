@@ -47,6 +47,25 @@ jobs:
           unzip -q /tmp/project.zip -d chatgpt_apk_build/project
           test -f chatgpt_apk_build/project/app/build.gradle
 
+      - name: Apply verified compile fix
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('chatgpt_apk_build/project/app/src/main/java/com/quizcoze/realtime/DoubaoAsrClient.java')
+          s = p.read_text()
+          old = '        return ws.send(ByteString.of(audioRequest(pcm, false)));'
+          new = '''        try {
+              return ws.send(ByteString.of(audioRequest(pcm, false)));
+          } catch (Throwable t) {
+              listener.onError("实时音频封包失败：" + t.getMessage());
+              return false;
+          }'''
+          if old not in s:
+              raise SystemExit('expected source line not found')
+          p.write_text(s.replace(old, new))
+          PY
+
       - name: Build debug APK
         working-directory: chatgpt_apk_build/project
         run: gradle :app:assembleDebug --stacktrace
