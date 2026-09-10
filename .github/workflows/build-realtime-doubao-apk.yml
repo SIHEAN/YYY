@@ -1,4 +1,4 @@
-name: Build Realtime Answer Doubao APK
+name: Build QuizCoze Realtime Answer Final APK
 
 on:
   push:
@@ -37,7 +37,7 @@ jobs:
         with:
           gradle-version: '8.10.2'
 
-      - name: Reconstruct verified v1 source
+      - name: Reconstruct V1 and apply V2
         shell: bash
         run: |
           set -euo pipefail
@@ -46,61 +46,117 @@ jobs:
           cat chatgpt_apk_build/project.b64.00 chatgpt_apk_build/project.b64.00_tail chatgpt_apk_build/project.b64.01 chatgpt_apk_build/project.b64.02 | tr -d '\n\r' | base64 --decode > /tmp/project.zip
           echo '0a100b16575f685ee020eec936638aa290ab64821fcca5ecaecd04aa9d76009b  /tmp/project.zip' | sha256sum -c -
           unzip -q /tmp/project.zip -d chatgpt_apk_build/project
-          test -f chatgpt_apk_build/project/app/build.gradle
+          cat chatgpt_apk_build/v2patch.b64.* | tr -d '\n\r' | base64 --decode > /tmp/v2.patch
+          cd chatgpt_apk_build/project
+          patch -p4 --batch --forward < /tmp/v2.patch || true
 
-      - name: Apply prior audio compile fix
+      - name: Normalize final V2 source and enforce behavior
         shell: bash
         run: |
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
-          p = Path('chatgpt_apk_build/project/app/src/main/java/com/quizcoze/realtime/DoubaoAsrClient.java')
-          s = p.read_text()
-          old = '        return ws.send(ByteString.of(audioRequest(pcm, false)));'
-          new = '''        try {
-              return ws.send(ByteString.of(audioRequest(pcm, false)));
-          } catch (Throwable t) {
-              listener.onError("实时音频封包失败：" + t.getMessage());
-              return false;
-          }'''
-          if old not in s:
-              raise SystemExit('expected source line not found')
-          p.write_text(s.replace(old, new))
+
+          root = Path('chatgpt_apk_build/project')
+          main = root / 'app/src/main/java/com/quizcoze/realtime/MainActivity.java'
+          asr = root / 'app/src/main/java/com/quizcoze/realtime/DoubaoAsrClient.java'
+          ai = root / 'app/src/main/java/com/quizcoze/realtime/AiAnswerClient.java'
+
+          s = main.read_text()
+          s = s.replace('new LinearLayout.Layout.LayoutParams(', 'new LinearLayout.LayoutParams(')
+          s = s.replace(
+              'root.addView(answerView, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(330)));',
+              'answerView.setMinHeight(dp(330));\n        root.addView(answerView, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));'
+          )
+          main.write_text(s)
+
+          s = asr.read_text()
+          start = s.index('    public boolean sendAudio(byte[] pcm) {')
+          end = s.index('    public void stop() {', start)
+          method = '''    public boolean sendAudio(byte[] pcm) {\n        WebSocket ws = webSocket;\n        if (!open || ws == null || pcm == null || pcm.length == 0) return false;\n        try {\n            return ws.send(ByteString.of(audioRequest(pcm, false)));\n        } catch (Throwable t) {\n            listener.onError("实时音频封包失败：" + t.getMessage());\n            return false;\n        }\n    }\n\n'''
+          asr.write_text(s[:start] + method + s[end:])
+
+          s = ai.read_text()
+          start = s.index('    private static JSONObject buildAnswerBody')
+          end = s.index('    private static JSONObject buildTestBody', start)
+          method = r'''    private static JSONObject buildAnswerBody(SpeechSettings s, String question, boolean stream) throws Exception {
+              String system = "你是一个严谨的题目分析助手。用户提供的是实时语音识别后的题目文本。"
+                      + "只依据用户提供的文本作答，优先保证答案正确、可执行、格式稳定。"
+                      + "先在内部判断属于单选题、多选题、编程题还是通用问题，但不要输出分类过程。";
+              String format = "请根据下面的语音识别文本直接作答，并严格复用 QuizCoze 原来的输出规则：\n"
+                      + "【单选题】\n"
+                      + "输出要求：第一行只写“答案：X”（X为选项字母或完整选项）；第二行开始给出简洁理由。\n"
+                      + "不要虚构文本中不存在的信息；若题目不完整，请明确指出缺失内容。\n\n"
+                      + "【多选题】\n"
+                      + "输出要求：第一行只写“答案：A,B,...”；随后逐项给出简洁理由。\n"
+                      + "不要虚构文本中不存在的信息；若题目不完整，请明确指出缺失内容。\n\n"
+                      + "【编程题】\n"
+                      + "请给出正确、完整、可直接提交的解答。严格按以下格式输出，不要省略标题：\n"
+                      + "**解题思路：**\n"
+                      + "- 要点1\n"
+                      + "- 要点2\n"
+                      + "**代码实现：**\n"
+                      + "```text\n"
+                      + "完整可运行代码\n"
+                      + "```\n"
+                      + "**时间复杂度：** O(...)\n"
+                      + "**空间复杂度：** O(...)\n"
+                      + "代码块语言标签请尽量使用题目要求的编程语言，而不是 text。\n"
+                      + "若信息不足，先指出缺失信息，再基于可见条件给出最合理方案。\n\n"
+                      + "【通用问题】\n"
+                      + "优先给出可直接使用的结论，再给必要解释。\n\n"
+                      + "语音识别文本：\n" + question;
+              JSONArray messages = new JSONArray()
+                      .put(new JSONObject().put("role", "system").put("content", system))
+                      .put(new JSONObject().put("role", "user").put("content", format));
+              return new JSONObject()
+                      .put("model", s.aiModel.trim())
+                      .put("messages", messages)
+                      .put("temperature", 0.2)
+                      .put("max_tokens", Math.max(128, Math.min(4096, s.aiMaxTokens)))
+                      .put("stream", stream);
+          }
+
+          '''
+          ai.write_text(s[:start] + method + s[end:])
+
+          for p in root.rglob('*.rej'):
+              p.unlink()
+          for p in root.rglob('*.orig'):
+              p.unlink()
           PY
 
-      - name: Apply realtime-answer v2 patch
-        shell: bash
-        run: |
-          set -euo pipefail
-          cat chatgpt_apk_build/v2patch.b64.* | tr -d '\n\r' | base64 --decode > /tmp/v2.patch
-          cd chatgpt_apk_build/project
-          # One Doubao sendAudio hunk is expected to be already satisfied by the prior compile fix.
-          patch -p4 --batch --forward < /tmp/v2.patch || true
-          rm -f app/src/main/java/com/quizcoze/realtime/DoubaoAsrClient.java.rej
-          test -f app/src/main/java/com/quizcoze/realtime/AiAnswerClient.java
-          grep -q "com.quizcoze.realtime.answer" app/build.gradle
-          grep -q "aiApiKey" app/src/main/java/com/quizcoze/realtime/SpeechSettings.java
-          grep -q "client.ask(text)" app/src/main/java/com/quizcoze/realtime/MainActivity.java
-          grep -q 'end_window_size.*, clamp(cfg.endWindowMs, 300, 3000)' app/src/main/java/com/quizcoze/realtime/DoubaoAsrClient.java
-          grep -q 'return ws.send(ByteString.of(audioRequest(pcm, false)))' app/src/main/java/com/quizcoze/realtime/DoubaoAsrClient.java
+          ROOT=chatgpt_apk_build/project
+          test -f "$ROOT/app/src/main/java/com/quizcoze/realtime/AiAnswerClient.java"
+          grep -q 'client.ask(text)' "$ROOT/app/src/main/java/com/quizcoze/realtime/MainActivity.java"
+          grep -q 'u.optBoolean("definite", false)' "$ROOT/app/src/main/java/com/quizcoze/realtime/DoubaoAsrClient.java"
+          grep -q 'end_window_size.*clamp(cfg.endWindowMs, 300, 3000)' "$ROOT/app/src/main/java/com/quizcoze/realtime/DoubaoAsrClient.java"
+          grep -q 'endWindowMs = 400' "$ROOT/app/src/main/java/com/quizcoze/realtime/SpeechSettings.java"
+          grep -q '答案：X' "$ROOT/app/src/main/java/com/quizcoze/realtime/AiAnswerClient.java"
+          grep -q '答案：A,B' "$ROOT/app/src/main/java/com/quizcoze/realtime/AiAnswerClient.java"
+          grep -q '解题思路' "$ROOT/app/src/main/java/com/quizcoze/realtime/AiAnswerClient.java"
+          grep -q 'put("stream", stream)' "$ROOT/app/src/main/java/com/quizcoze/realtime/AiAnswerClient.java"
 
-      - name: Build debug APK
+      - name: Build final APK
         working-directory: chatgpt_apk_build/project
         run: gradle :app:assembleDebug --stacktrace
 
-      - name: Collect APK
+      - name: Verify and collect APK
         run: |
           set -euo pipefail
+          APK=chatgpt_apk_build/project/app/build/outputs/apk/debug/app-debug.apk
+          test -s "$APK"
+          unzip -t "$APK" >/dev/null
           mkdir -p out
-          cp chatgpt_apk_build/project/app/build/outputs/apk/debug/app-debug.apk out/QuizCoze-Realtime-Doubao-Answer-v2.apk
-          sha256sum out/QuizCoze-Realtime-Doubao-Answer-v2.apk | tee out/SHA256.txt
+          cp "$APK" out/QuizCoze-Realtime-Doubao-V2-Final.apk
+          sha256sum out/QuizCoze-Realtime-Doubao-V2-Final.apk | tee out/SHA256.txt
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: QuizCoze-Realtime-Doubao-Answer-v2-APK
+          name: QuizCoze-Realtime-Doubao-V2-Final
           path: |
-            out/QuizCoze-Realtime-Doubao-Answer-v2.apk
+            out/QuizCoze-Realtime-Doubao-V2-Final.apk
             out/SHA256.txt
           if-no-files-found: error
           retention-days: 1
