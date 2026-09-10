@@ -68,6 +68,12 @@ jobs:
               'root.addView(questionView, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(82));',
               'root.addView(questionView, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(82)));'
           )
+          if 'EditText aiBase = field(' not in s:
+              marker = '        root.addView(aiDesc);\n'
+              insert = '''        root.addView(aiDesc);\n\n        EditText aiBase = field("https://ark.cn-beijing.volces.com/api/v3", settings.aiBaseUrl, false);\n        EditText aiKey = field("方舟 API Key", settings.aiApiKey, true);\n        EditText aiModel = field("模型名称 / Endpoint ID", settings.aiModel, false);\n        EditText aiPath = field("/chat/completions", settings.aiEndpointPath, false);\n        root.addView(label("AI Base URL")); root.addView(aiBase);\n        root.addView(label("AI API Key")); root.addView(aiKey);\n        root.addView(label("模型 / Endpoint ID")); root.addView(aiModel);\n        root.addView(label("Endpoint Path（高级）")); root.addView(aiPath);\n'''
+              if marker not in s:
+                  raise SystemExit('AI config insertion marker not found')
+              s = s.replace(marker, insert, 1)
           s = s.replace(
               'root.addView(answerView, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(330)));',
               'answerView.setMinHeight(dp(330));\n        root.addView(answerView, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));'
@@ -118,6 +124,7 @@ jobs:
 
           ROOT=chatgpt_apk_build/project
           test -f "$ROOT/app/src/main/java/com/quizcoze/realtime/AiAnswerClient.java"
+          grep -q 'EditText aiBase = field' "$ROOT/app/src/main/java/com/quizcoze/realtime/MainActivity.java"
           grep -q 'client.ask(text)' "$ROOT/app/src/main/java/com/quizcoze/realtime/MainActivity.java"
           grep -q 'u.optBoolean("definite", false)' "$ROOT/app/src/main/java/com/quizcoze/realtime/DoubaoAsrClient.java"
           grep -q 'end_window_size.*clamp(cfg.endWindowMs, 300, 3000)' "$ROOT/app/src/main/java/com/quizcoze/realtime/DoubaoAsrClient.java"
