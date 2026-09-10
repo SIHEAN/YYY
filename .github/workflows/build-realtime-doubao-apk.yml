@@ -1,0 +1,67 @@
+name: Build Realtime Doubao APK
+
+on:
+  push:
+    branches:
+      - apk-build-realtime-speech-20260910
+    paths:
+      - 'chatgpt_apk_build/**'
+      - '.github/workflows/build-realtime-doubao-apk.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK components
+        run: yes | sdkmanager 'platforms;android-35' 'build-tools;35.0.0' || true
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+
+      - name: Reconstruct source project
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p chatgpt_apk_build/project
+          cat chatgpt_apk_build/project.b64.* | tr -d '\n\r' | base64 --decode > /tmp/project.zip
+          unzip -q /tmp/project.zip -d chatgpt_apk_build/project
+          test -f chatgpt_apk_build/project/app/build.gradle
+
+      - name: Build debug APK
+        working-directory: chatgpt_apk_build/project
+        run: gradle :app:assembleDebug --stacktrace
+
+      - name: Collect APK
+        run: |
+          mkdir -p out
+          cp chatgpt_apk_build/project/app/build/outputs/apk/debug/app-debug.apk out/QuizCoze-Realtime-Doubao.apk
+          sha256sum out/QuizCoze-Realtime-Doubao.apk | tee out/SHA256.txt
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: QuizCoze-Realtime-Doubao-APK
+          path: |
+            out/QuizCoze-Realtime-Doubao.apk
+            out/SHA256.txt
+          if-no-files-found: error
+          retention-days: 1
