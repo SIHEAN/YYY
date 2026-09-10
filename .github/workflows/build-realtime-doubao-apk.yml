@@ -1,9 +1,9 @@
-name: Build Realtime Doubao APK
+name: Build Realtime Answer Doubao APK
 
 on:
   push:
     branches:
-      - apk-build-realtime-speech-20260910
+      - apk-build-realtime-answer-20260910
     paths:
       - 'chatgpt_apk_build/**'
       - '.github/workflows/build-realtime-doubao-apk.yml'
@@ -37,19 +37,21 @@ jobs:
         with:
           gradle-version: '8.10.2'
 
-      - name: Reconstruct and verify source project
+      - name: Reconstruct verified v1 source
         shell: bash
         run: |
           set -euo pipefail
+          rm -rf chatgpt_apk_build/project
           mkdir -p chatgpt_apk_build/project
-          cat chatgpt_apk_build/project.b64.* | tr -d '\n\r' | base64 --decode > /tmp/project.zip
+          cat chatgpt_apk_build/project.b64.00 chatgpt_apk_build/project.b64.00_tail chatgpt_apk_build/project.b64.01 chatgpt_apk_build/project.b64.02 | tr -d '\n\r' | base64 --decode > /tmp/project.zip
           echo '0a100b16575f685ee020eec936638aa290ab64821fcca5ecaecd04aa9d76009b  /tmp/project.zip' | sha256sum -c -
           unzip -q /tmp/project.zip -d chatgpt_apk_build/project
           test -f chatgpt_apk_build/project/app/build.gradle
 
-      - name: Apply verified compile fix
+      - name: Apply prior audio compile fix
         shell: bash
         run: |
+          set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
           p = Path('chatgpt_apk_build/project/app/src/main/java/com/quizcoze/realtime/DoubaoAsrClient.java')
@@ -66,22 +68,39 @@ jobs:
           p.write_text(s.replace(old, new))
           PY
 
+      - name: Apply realtime-answer v2 patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat chatgpt_apk_build/v2patch.b64.* | tr -d '\n\r' | base64 --decode > /tmp/v2.patch
+          cd chatgpt_apk_build/project
+          # One Doubao sendAudio hunk is expected to be already satisfied by the prior compile fix.
+          patch -p4 --batch --forward < /tmp/v2.patch || true
+          rm -f app/src/main/java/com/quizcoze/realtime/DoubaoAsrClient.java.rej
+          test -f app/src/main/java/com/quizcoze/realtime/AiAnswerClient.java
+          grep -q "com.quizcoze.realtime.answer" app/build.gradle
+          grep -q "aiApiKey" app/src/main/java/com/quizcoze/realtime/SpeechSettings.java
+          grep -q "client.ask(text)" app/src/main/java/com/quizcoze/realtime/MainActivity.java
+          grep -q 'end_window_size.*, clamp(cfg.endWindowMs, 300, 3000)' app/src/main/java/com/quizcoze/realtime/DoubaoAsrClient.java
+          grep -q 'return ws.send(ByteString.of(audioRequest(pcm, false)))' app/src/main/java/com/quizcoze/realtime/DoubaoAsrClient.java
+
       - name: Build debug APK
         working-directory: chatgpt_apk_build/project
         run: gradle :app:assembleDebug --stacktrace
 
       - name: Collect APK
         run: |
+          set -euo pipefail
           mkdir -p out
-          cp chatgpt_apk_build/project/app/build/outputs/apk/debug/app-debug.apk out/QuizCoze-Realtime-Doubao.apk
-          sha256sum out/QuizCoze-Realtime-Doubao.apk | tee out/SHA256.txt
+          cp chatgpt_apk_build/project/app/build/outputs/apk/debug/app-debug.apk out/QuizCoze-Realtime-Doubao-Answer-v2.apk
+          sha256sum out/QuizCoze-Realtime-Doubao-Answer-v2.apk | tee out/SHA256.txt
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: QuizCoze-Realtime-Doubao-APK
+          name: QuizCoze-Realtime-Doubao-Answer-v2-APK
           path: |
-            out/QuizCoze-Realtime-Doubao.apk
+            out/QuizCoze-Realtime-Doubao-Answer-v2.apk
             out/SHA256.txt
           if-no-files-found: error
           retention-days: 1
