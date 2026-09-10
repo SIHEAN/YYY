@@ -37,12 +37,13 @@ jobs:
         with:
           gradle-version: '8.10.2'
 
-      - name: Reconstruct source project
+      - name: Reconstruct and verify source project
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p chatgpt_apk_build/project
           cat chatgpt_apk_build/project.b64.* | tr -d '\n\r' | base64 --decode > /tmp/project.zip
+          echo '0a100b16575f685ee020eec936638aa290ab64821fcca5ecaecd04aa9d76009b  /tmp/project.zip' | sha256sum -c -
           unzip -q /tmp/project.zip -d chatgpt_apk_build/project
           test -f chatgpt_apk_build/project/app/build.gradle
 
