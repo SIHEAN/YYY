@@ -2,11 +2,8 @@ name: Build QuizCoze Realtime Answer Final APK
 
 on:
   push:
-    branches:
-      - apk-build-realtime-answer-20260910
-    paths:
-      - 'chatgpt_apk_build/**'
-      - '.github/workflows/build-realtime-doubao-apk.yml'
+    branches: [apk-build-realtime-answer-20260910]
+    paths: ['chatgpt_apk_build/**', '.github/workflows/build-realtime-doubao-apk.yml']
   workflow_dispatch:
 
 permissions:
@@ -17,27 +14,18 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Java 17
-        uses: actions/setup-java@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
-
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Android SDK components
-        run: yes | sdkmanager 'platforms;android-35' 'build-tools;35.0.0' || true
-
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
+      - uses: android-actions/setup-android@v3
+      - run: yes | sdkmanager 'platforms;android-35' 'build-tools;35.0.0' || true
+      - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.10.2'
 
-      - name: Reconstruct V1 and apply V2
+      - name: Reconstruct and normalize V2
         shell: bash
         run: |
           set -euo pipefail
@@ -47,83 +35,73 @@ jobs:
           echo '0a100b16575f685ee020eec936638aa290ab64821fcca5ecaecd04aa9d76009b  /tmp/project.zip' | sha256sum -c -
           unzip -q /tmp/project.zip -d chatgpt_apk_build/project
           cat chatgpt_apk_build/v2patch.b64.* | tr -d '\n\r' | base64 --decode > /tmp/v2.patch
-          cd chatgpt_apk_build/project
-          patch -p4 --batch --forward < /tmp/v2.patch || true
+          (cd chatgpt_apk_build/project && patch -p4 --batch --forward < /tmp/v2.patch || true)
 
-      - name: Normalize final V2 source and enforce behavior
-        shell: bash
-        run: |
-          set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
+          root=Path('chatgpt_apk_build/project')
+          main=root/'app/src/main/java/com/quizcoze/realtime/MainActivity.java'
+          asr=root/'app/src/main/java/com/quizcoze/realtime/DoubaoAsrClient.java'
+          ai=root/'app/src/main/java/com/quizcoze/realtime/AiAnswerClient.java'
 
-          root = Path('chatgpt_apk_build/project')
-          main = root / 'app/src/main/java/com/quizcoze/realtime/MainActivity.java'
-          asr = root / 'app/src/main/java/com/quizcoze/realtime/DoubaoAsrClient.java'
-          ai = root / 'app/src/main/java/com/quizcoze/realtime/AiAnswerClient.java'
-
-          s = main.read_text()
-          s = s.replace('new LinearLayout.Layout.LayoutParams(', 'new LinearLayout.LayoutParams(')
-          s = s.replace(
-              'root.addView(questionView, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(82));',
-              'root.addView(questionView, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(82)));'
-          )
+          s=main.read_text()
+          s=s.replace('new LinearLayout.Layout.LayoutParams(', 'new LinearLayout.LayoutParams(')
+          s=s.replace('root.addView(questionView, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(82));', 'root.addView(questionView, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(82)));')
           if 'EditText aiBase = field(' not in s:
-              marker = '        root.addView(aiDesc);\n'
-              insert = '''        root.addView(aiDesc);\n\n        EditText aiBase = field("https://ark.cn-beijing.volces.com/api/v3", settings.aiBaseUrl, false);\n        EditText aiKey = field("方舟 API Key", settings.aiApiKey, true);\n        EditText aiModel = field("模型名称 / Endpoint ID", settings.aiModel, false);\n        EditText aiPath = field("/chat/completions", settings.aiEndpointPath, false);\n        root.addView(label("AI Base URL")); root.addView(aiBase);\n        root.addView(label("AI API Key")); root.addView(aiKey);\n        root.addView(label("模型 / Endpoint ID")); root.addView(aiModel);\n        root.addView(label("Endpoint Path（高级）")); root.addView(aiPath);\n'''
-              if marker not in s:
-                  raise SystemExit('AI config insertion marker not found')
-              s = s.replace(marker, insert, 1)
-          s = s.replace(
-              'root.addView(answerView, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(330)));',
-              'answerView.setMinHeight(dp(330));\n        root.addView(answerView, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));'
-          )
+              marker='        TextView state = text(error == null ? "尚未校验" : error, 14);\n'
+              block='''        root.addView(section("② 答题大模型 API（原 QuizCoze 输出链路）"));
+        TextView aiDesc = text("最终识别文本会立刻送到 OpenAI-compatible chat/completions；答案 stream=true 边生成边显示。", 13);
+        aiDesc.setTextColor(Color.DKGRAY);
+        root.addView(aiDesc);
+        EditText aiBase = field("https://ark.cn-beijing.volces.com/api/v3", settings.aiBaseUrl, false);
+        EditText aiKey = field("方舟 API Key", settings.aiApiKey, true);
+        EditText aiModel = field("模型名称 / Endpoint ID", settings.aiModel, false);
+        EditText aiPath = field("/chat/completions", settings.aiEndpointPath, false);
+        root.addView(label("AI Base URL")); root.addView(aiBase);
+        root.addView(label("AI API Key")); root.addView(aiKey);
+        root.addView(label("模型 / Endpoint ID")); root.addView(aiModel);
+        root.addView(label("Endpoint Path（高级）")); root.addView(aiPath);
+
+'''
+              if marker not in s: raise SystemExit('stable state marker not found')
+              s=s.replace(marker, block+marker, 1)
+          s=s.replace('root.addView(answerView, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(330)));', 'answerView.setMinHeight(dp(330));\n        root.addView(answerView, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));')
           main.write_text(s)
 
-          s = asr.read_text()
-          start = s.index('    public boolean sendAudio(byte[] pcm) {')
-          end = s.index('    public void stop() {', start)
-          method = '''    public boolean sendAudio(byte[] pcm) {\n        WebSocket ws = webSocket;\n        if (!open || ws == null || pcm == null || pcm.length == 0) return false;\n        try {\n            return ws.send(ByteString.of(audioRequest(pcm, false)));\n        } catch (Throwable t) {\n            listener.onError("实时音频封包失败：" + t.getMessage());\n            return false;\n        }\n    }\n\n'''
-          asr.write_text(s[:start] + method + s[end:])
+          s=asr.read_text(); a=s.index('    public boolean sendAudio(byte[] pcm) {'); b=s.index('    public void stop() {',a)
+          send='''    public boolean sendAudio(byte[] pcm) {
+        WebSocket ws = webSocket;
+        if (!open || ws == null || pcm == null || pcm.length == 0) return false;
+        try { return ws.send(ByteString.of(audioRequest(pcm, false))); }
+        catch (Throwable t) { listener.onError("实时音频封包失败：" + t.getMessage()); return false; }
+    }
 
-          s = ai.read_text()
-          start = s.index('    private static JSONObject buildAnswerBody')
-          end = s.index('    private static JSONObject buildTestBody', start)
-          method = r'''    private static JSONObject buildAnswerBody(SpeechSettings s, String question, boolean stream) throws Exception {
-              String system = "你是一名资深软件工程师和面试辅导助手。请严格基于实时语音识别后的题目文本作答；若信息不足，先说明缺失，再给出最合理的假设与解决方案。";
-              String format = "请根据下面的语音识别文本直接作答，并严格复用 QuizCoze 原来的输出规则：\n"
-                      + "【单选题】\n"
-                      + "请识别文本中的单选题，给出最可能的正确选项。输出要求：第一行只写“答案：X”（X为选项字母或完整选项）；第二行开始给出简洁理由。不要虚构文本中不存在的信息；若题目不完整，请明确指出缺失内容。\n\n"
-                      + "【多选题】\n"
-                      + "请识别文本中的多选题，给出所有正确选项。输出要求：第一行只写“答案：A,B,...”；随后逐项给出简洁理由。不要虚构文本中不存在的信息；若题目不完整，请明确指出缺失内容。\n\n"
-                      + "【编程题】\n"
-                      + "请识别文本中的编程题并给出正确、完整、可直接提交的解答。输出严格包含 **解题思路：** / **代码实现：** / **时间复杂度：** / **空间复杂度：**。\n\n"
-                      + "【通用问题】\n"
-                      + "请仔细阅读文本内容，理解用户最可能的需求，并给出高质量、可直接使用的回答。\n\n"
-                      + "请先在内部判断属于哪一类，不要输出分类过程。\n\n"
-                      + "语音识别文本：\n" + question;
-              JSONArray messages = new JSONArray()
-                      .put(new JSONObject().put("role", "system").put("content", system))
-                      .put(new JSONObject().put("role", "user").put("content", format));
-              return new JSONObject()
-                      .put("model", s.aiModel.trim())
-                      .put("messages", messages)
-                      .put("temperature", 0.2)
-                      .put("max_tokens", Math.max(128, Math.min(4096, s.aiMaxTokens)))
-                      .put("stream", stream);
-          }
+'''
+          asr.write_text(s[:a]+send+s[b:])
 
-          '''
-          ai.write_text(s[:start] + method + s[end:])
+          s=ai.read_text(); a=s.index('    private static JSONObject buildAnswerBody'); b=s.index('    private static JSONObject buildTestBody',a)
+          body=r'''    private static JSONObject buildAnswerBody(SpeechSettings s, String question, boolean stream) throws Exception {
+        String system = "你是一名资深软件工程师和面试辅导助手。请严格基于实时语音识别后的题目文本作答；若信息不足，先说明缺失，再给出最合理的假设与解决方案。";
+        String format = "请根据下面的语音识别文本直接作答，并严格复用 QuizCoze 原来的输出规则：\n"
+                + "【单选题】第一行只写“答案：X”（X为选项字母或完整选项）；第二行开始给出简洁理由。不要虚构文本中不存在的信息；若题目不完整，请明确指出缺失内容。\n\n"
+                + "【多选题】第一行只写“答案：A,B,...”；随后逐项给出简洁理由。不要虚构文本中不存在的信息；若题目不完整，请明确指出缺失内容。\n\n"
+                + "【编程题】给出正确、完整、可直接提交的解答，严格包含 **解题思路：**、**代码实现：**、**时间复杂度：**、**空间复杂度：**。\n\n"
+                + "【通用问题】优先给出可直接使用的结论，再给必要解释。\n\n"
+                + "先在内部判断题型，不要输出分类过程。\n\n语音识别文本：\n" + question;
+        JSONArray messages = new JSONArray()
+                .put(new JSONObject().put("role","system").put("content",system))
+                .put(new JSONObject().put("role","user").put("content",format));
+        return new JSONObject().put("model",s.aiModel.trim()).put("messages",messages)
+                .put("temperature",0.2).put("max_tokens",Math.max(128,Math.min(4096,s.aiMaxTokens))).put("stream",stream);
+    }
 
-          for p in root.rglob('*.rej'):
-              p.unlink()
-          for p in root.rglob('*.orig'):
-              p.unlink()
+'''
+          ai.write_text(s[:a]+body+s[b:])
+          for p in root.rglob('*.rej'): p.unlink()
+          for p in root.rglob('*.orig'): p.unlink()
           PY
 
           ROOT=chatgpt_apk_build/project
-          test -f "$ROOT/app/src/main/java/com/quizcoze/realtime/AiAnswerClient.java"
           grep -q 'EditText aiBase = field' "$ROOT/app/src/main/java/com/quizcoze/realtime/MainActivity.java"
           grep -q 'client.ask(text)' "$ROOT/app/src/main/java/com/quizcoze/realtime/MainActivity.java"
           grep -q 'u.optBoolean("definite", false)' "$ROOT/app/src/main/java/com/quizcoze/realtime/DoubaoAsrClient.java"
@@ -132,7 +110,7 @@ jobs:
           grep -q '答案：X' "$ROOT/app/src/main/java/com/quizcoze/realtime/AiAnswerClient.java"
           grep -q '答案：A,B' "$ROOT/app/src/main/java/com/quizcoze/realtime/AiAnswerClient.java"
           grep -q '解题思路' "$ROOT/app/src/main/java/com/quizcoze/realtime/AiAnswerClient.java"
-          grep -q 'put("stream", stream)' "$ROOT/app/src/main/java/com/quizcoze/realtime/AiAnswerClient.java"
+          grep -q 'put("stream",stream)' "$ROOT/app/src/main/java/com/quizcoze/realtime/AiAnswerClient.java"
 
       - name: Build final APK
         working-directory: chatgpt_apk_build/project
@@ -148,8 +126,7 @@ jobs:
           cp "$APK" out/QuizCoze-Realtime-Doubao-V2-Final.apk
           sha256sum out/QuizCoze-Realtime-Doubao-V2-Final.apk | tee out/SHA256.txt
 
-      - name: Upload APK artifact
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: QuizCoze-Realtime-Doubao-V2-Final
           path: |
